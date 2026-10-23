@@ -1,0 +1,414 @@
+module Main exposing (main)
+
+import ListZipper as LZ
+import NEList as NEList
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task exposing (Task)
+import Std.Ui.Border as Border
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Font as Font
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    }
+
+type Msg
+    = Schemas (NEList String)
+    | NoSchemas
+    | Tables (NEList String)
+    | NoTables String
+    | Rows (NEList (List String))
+    | NoRows Table
+    | KeyPress KeyEvent
+    | CriticalError String
+
+
+connectionStr =
+    "postgres://anuragohri92@localhost:5432/northwind"
+
+type Selector
+    = SelectSchema (NEList String) (ListZipper String)
+    | SelectTable String (NEList String) (ListZipper String)
+
+type alias Table =
+    { name : String
+    , schema : String
+    }
+
+type Mode
+    = FetchingSchemas
+    | NoSchemasMode
+    | FetchingTables String
+    | NoTablesMode String
+    | FetchingRows Table
+    | NoRowsMode Table
+    | RowsMode (NEList (List String))
+    | Select Selector
+
+type alias Model =
+    { count : Int
+    , conn : Db.Db
+    , mode : Mode
+    }
+
+
+init : Db -> ( Model, Cmd Msg )
+init db =
+    let
+        handler result =
+            case result of
+
+                Err err ->
+                    Error.toString err
+                        |> String.append
+                               "Could not fetch schemas from the DB server: "
+                        |> CriticalError
+
+                Ok schemas ->
+                    case NEList.fromList (List.concatMap Dict.values schemas) of
+
+                        Nothing ->
+                            NoSchemas
+
+                        Just neSchemas ->
+                            Schemas neSchemas
+    in
+        ( { count = 0, conn = db, mode = FetchingSchemas }
+        , Cmd.perform
+              (Db.query
+                  db
+                  "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg_%' AND schema_name <> 'information_schema';"
+                  [])
+              handler
+        )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        NoSchemas ->
+            ( { model | mode = NoSchemasMode }, Cmd.none )
+
+        Schemas schemas ->
+            ( { model
+                  | mode =
+                      case model.mode of
+
+                          FetchingSchemas ->
+                              Select
+                                  (LZ.fromList schemas |> SelectSchema schemas)
+
+                          _ ->
+                              model.mode
+              }
+            , Cmd.none
+            )
+
+        NoTables schema ->
+            ( { model | mode = NoTablesMode schema }, Cmd.none )
+
+        Tables tables ->
+            ( { model
+                  | mode =
+                      case model.mode of
+
+                          FetchingTables schema ->
+                              Select
+                                  (LZ.fromList tables
+                                      |> SelectTable schema tables)
+
+                          _ ->
+                              model.mode
+              }
+            , Cmd.none
+            )
+
+        NoRows table ->
+            ( { model | mode = NoRowsMode table }, Cmd.none )
+
+        Rows rows ->
+            ( { model | mode = RowsMode rows }, Cmd.none )
+
+        CriticalError err ->
+            ( model, Cmd.none )
+
+        KeyPress key ->
+            case ( key.kind, key.value ) of
+
+                ( "up", _ ) ->
+                    case model.mode of
+
+                        Select selector ->
+                            ( case selector of
+
+                                  SelectSchema list lz ->
+                                      { model
+                                          | mode =
+                                              Select <| SelectSchema list
+                                                  <| LZ.backward lz
+                                      }
+
+                                  SelectTable schema list lz ->
+                                      { model
+                                          | mode =
+                                              Select <| SelectTable schema list
+                                                  <| LZ.backward lz
+                                      }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                ( "down", _ ) ->
+                    case model.mode of
+
+                        Select selector ->
+                            ( case selector of
+
+                                  SelectSchema list lz ->
+                                      { model
+                                          | mode =
+                                              Select <| SelectSchema list
+                                                  <| LZ.forward lz
+                                      }
+
+                                  SelectTable schema list lz ->
+                                      { model
+                                          | mode =
+                                              Select <| SelectTable schema list
+                                                  <| LZ.forward lz
+                                      }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                ( "enter", _ ) ->
+                    case model.mode of
+
+                        Select selector ->
+                            case selector of
+
+                                SelectSchema list lz ->
+                                    let
+                                        selected = lz.current
+                                        handler result =
+                                            case result of
+
+                                                Err err ->
+                                                    Error.toString err
+                                                        |> String.append
+                                                               "Could not fetch tables from the DB server: "
+                                                        |> CriticalError
+
+                                                Ok tables ->
+                                                    case NEList.fromList
+                                                             (List.concatMap
+                                                                 Dict.values
+                                                                 tables) of
+
+                                                        Nothing ->
+                                                            NoTables selected
+
+                                                        Just neTables ->
+                                                            Tables neTables
+                                    in
+                                        ( { model
+                                              | mode = FetchingTables selected
+                                          }
+                                        , Cmd.perform
+                                              (Db.query
+                                                  model.conn
+                                                  (String.concat
+                                                      [ "SELECT table_name FROM information_schema.tables WHERE table_schema = '"
+                                                      , selected
+                                                      , "' "
+                                                      , "order by table_name"
+                                                      ])
+                                                  [])
+                                              handler
+                                        )
+
+                                SelectTable schema list lz ->
+                                    let
+                                        selected = lz.current
+                                        handler result =
+                                            case result of
+
+                                                Err err ->
+                                                    Error.toString err
+                                                        |> String.append
+                                                               "Could not fetch rows for table: "
+                                                        |> CriticalError
+
+                                                Ok rows ->
+                                                    case NEList.fromList
+                                                             (List.map
+                                                                 Dict.values
+                                                                 rows) of
+
+                                                        Nothing ->
+                                                            NoRows
+                                                                { name =
+                                                                    selected
+                                                                , schema =
+                                                                    schema
+                                                                }
+
+                                                        Just neRows ->
+                                                            Rows neRows
+                                    in
+                                        ( { model
+                                              | mode = FetchingTables selected
+                                          }
+                                        , Cmd.perform
+                                              (Db.query
+                                                  model.conn
+                                                  (String.concat
+                                                      [ "SELECT * FROM "
+                                                      , schema
+                                                      , "."
+                                                      , selected
+                                                      , " limit 10 "
+                                                      ])
+                                                  [])
+                                              handler
+                                        )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                ( "char", "s" ) ->
+                    ( { model | mode = FetchingSchemas }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.mode of
+
+        FetchingSchemas ->
+            Ui.text "Fetching schemas"
+
+        NoSchemasMode ->
+            Ui.text "There are no schemas"
+
+        FetchingTables schema ->
+            String.append "Fetching tables for schema: " schema |> Ui.text
+
+        NoTablesMode schema ->
+            String.append "There are no tables for schema: " schema |> Ui.text
+
+        NoRowsMode table ->
+            String.concat
+                [ "No rows found for ", table.schema, ".", table.name ]
+                |> Ui.text
+
+        RowsMode (NEList x xs) ->
+            x :: xs
+                |> List.map
+                       (\row ->
+                           List.map
+                               (Ui.text
+                                   >> Ui.el [ Ui.padding 0, Ui.width Ui.fill ])
+                               row
+                               |> Ui.row
+                                      [ Ui.width Ui.fill
+                                      , Ui.spacing 0
+                                      , Ui.padding 0
+                                      , Border.width 2
+                                      , Border.color Ui.white
+                                      ])
+                |> Ui.column [ Ui.spacing 0 ]
+
+        Select selector ->
+            case selector of
+
+                SelectSchema (NEList x xs) lz ->
+                    let
+                        schemaEls =
+                            List.indexedMap
+                                (\i e ->
+                                    Ui.row
+                                        []
+                                        [ let
+                                              begin =
+                                                  if i == lz.index then
+                                                      ">"
+
+                                                  else
+                                                      " "
+                                          in
+                                              String.append begin e |> Ui.text
+                                        ])
+                                (x :: xs)
+                                |> Ui.column [ Ui.height Ui.fill ]
+                        search = Ui.row [] [ Ui.text "Search: " ]
+                        status = Ui.text "Select"
+                    in
+                        search :: schemaEls :: [ status ]
+                            |> Ui.column [ Ui.height Ui.fill ]
+
+                SelectTable schema (NEList x xs) lz ->
+                    let
+                        tableEls =
+                            List.indexedMap
+                                (\i e ->
+                                    Ui.row
+                                        []
+                                        [ let
+                                              begin =
+                                                  if i == lz.index then
+                                                      ">"
+
+                                                  else
+                                                      " "
+                                          in
+                                              String.append begin e |> Ui.text
+                                        ])
+                                (x :: xs)
+                                |> Ui.column [ Ui.height Ui.fill ]
+                        search = Ui.row [] [ Ui.text "Search: " ]
+                        status = Ui.text "Select"
+                    in
+                        search :: tableEls :: [ status ]
+                            |> Ui.column [ Ui.height Ui.fill ]
+
+        FetchingRows table ->
+            String.concat
+                [ "Fetching rows for ", table.schema, ".", table.name ]
+                |> Ui.text
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+appDef conn =
+    App.app
+        { init = \() -> init conn
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withOnKey KeyPress
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    Db.open "postgres" connectionStr
+        |> Task.andThen (\conn -> appDef conn |> App.run)

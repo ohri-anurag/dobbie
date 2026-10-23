@@ -1,0 +1,47 @@
+module ListZipper exposing (..)
+
+import NEList exposing (NEList(..))
+
+type alias ListZipper a =
+    { before : List a
+    , current : a
+    , index : Int
+    , after : List a
+    }
+
+
+fromList : NEList a -> ListZipper a
+fromList (NEList x rest) =
+    { before = [], current = x, index = 0, after = rest }
+
+
+forward : ListZipper a -> ListZipper a
+forward lz =
+    case lz.after of
+
+        [] ->
+            lz
+
+        x :: rest ->
+            { lz
+                | before = lz.current :: lz.before
+                , current = x
+                , index = lz.index + 1
+                , after = rest
+            }
+
+
+backward : ListZipper a -> ListZipper a
+backward lz =
+    case lz.before of
+
+        [] ->
+            lz
+
+        x :: rest ->
+            { lz
+                | before = rest
+                , current = x
+                , index = lz.index - 1
+                , after = lz.current :: lz.after
+            }

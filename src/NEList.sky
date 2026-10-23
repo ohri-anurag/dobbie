@@ -1,0 +1,15 @@
+module NEList exposing (..)
+
+type NEList a
+    = NEList a (List a)
+
+
+fromList : List a -> Maybe (NEList a)
+fromList xs =
+    case xs of
+
+        x :: rest ->
+            Just (NEList x rest)
+
+        _ ->
+            Nothing
