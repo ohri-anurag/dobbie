@@ -13,3 +13,13 @@ fromList xs =
 
         _ ->
             Nothing
+
+
+map : (a -> b) -> NEList a -> NEList b
+map f (NEList x xs) =
+    NEList (f x) (List.map f xs)
+
+
+head : NEList a -> a
+head (NEList x _) =
+    x

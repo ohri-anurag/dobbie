@@ -1,12 +1,12 @@
 module Main exposing (main)
 
 import ListZipper as LZ
-import List.Extended as List
 import NEList as NEList
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.Task exposing (Task)
+import Sky.Core.Tuple as Tuple
 import Std.Ui.Border as Border
 import Std.App as App
 import Std.Cmd as Cmd
@@ -26,7 +26,7 @@ type Msg
     | NoSchemas
     | Tables (NEList String)
     | NoTables String
-    | Rows (NEList (List String))
+    | Rows (List String) (NEList (List String))
     | NoRows Table
     | KeyPress KeyEvent
     | CriticalError String
@@ -51,7 +51,7 @@ type Mode
     | NoTablesMode String
     | FetchingRows Table
     | NoRowsMode Table
-    | RowsMode (NEList (List String))
+    | RowsMode (List String) (NEList (List String))
     | Select Selector
 
 type alias Model =
@@ -136,8 +136,8 @@ update msg model =
         NoRows table ->
             ( { model | mode = NoRowsMode table }, Cmd.none )
 
-        Rows rows ->
-            ( { model | mode = RowsMode rows }, Cmd.none )
+        Rows headers rows ->
+            ( { model | mode = RowsMode headers rows }, Cmd.none )
 
         CriticalError err ->
             ( model, Cmd.none )
@@ -256,7 +256,7 @@ update msg model =
                                                 Ok rows ->
                                                     case NEList.fromList
                                                              (List.map
-                                                                 Dict.values
+                                                                 Dict.toList
                                                                  rows) of
 
                                                         Nothing ->
@@ -268,7 +268,15 @@ update msg model =
                                                                 }
 
                                                         Just neRows ->
-                                                            Rows neRows
+                                                            Rows
+                                                                (NEList.head
+                                                                    neRows
+                                                                    |> List.map
+                                                                           Tuple.first)
+                                                                (NEList.map
+                                                                    (List.map
+                                                                        Tuple.second)
+                                                                    neRows)
                                     in
                                         ( { model
                                               | mode = FetchingTables selected
@@ -317,12 +325,44 @@ view model =
             String.concat
                 [ "No rows found for ", table.schema, ".", table.name ]
 
-        RowsMode (NEList x xs) ->
-            x :: xs
-                |> List.map
-                       (\row -> List.intersperse " | " row |> String.concat)
-                |> List.intersperse "\n"
-                |> String.concat
+        RowsMode headers (NEList x xs) ->
+            let
+                width = 20
+                headerLen = List.length headers
+                topHeaderSeparators =
+                    String.repeat (width + 2) "─"
+                        |> (\str ->
+                               List.range 1 headerLen |> List.map (always str))
+                        |> String.join "┬"
+                        |> \str -> String.concat [ "┌", str, "┐" ]
+                bottomHeaderSeparators =
+                    String.repeat (width + 2) "─"
+                        |> (\str ->
+                               List.range 1 headerLen |> List.map (always str))
+                        |> String.join "┼"
+                        |> \str -> String.concat [ "├", str, "┤" ]
+                equalise str =
+                    let
+                        len = String.length str
+                    in
+                        if len < width then
+                            String.repeat (width - len) " " |> String.append str
+
+                        else if len > (width - 1) then
+                            String.ellipsize (width - 1) str
+
+                        else
+                            str
+                display row =
+                    List.map equalise row |> String.join " │ "
+                        |> \s -> String.concat [ "│ ", s, " │" ]
+            in
+                x :: xs |> List.map display
+                    |> (\rows ->
+                           topHeaderSeparators :: display headers
+                               :: bottomHeaderSeparators
+                               :: rows)
+                    |> String.join "\n"
 
         Select selector ->
             case selector of
@@ -344,8 +384,7 @@ view model =
                                 (x :: xs)
                         search = "Search: "
                     in
-                        search :: schemaEls |> List.intersperse "\n"
-                            |> String.concat
+                        search :: schemaEls |> String.join "\n"
 
                 SelectTable schema (NEList x xs) lz ->
                     let
@@ -364,8 +403,7 @@ view model =
                                 (x :: xs)
                         search = "Search: "
                     in
-                        search :: tableEls |> List.intersperse "\n"
-                            |> String.concat
+                        search :: tableEls |> String.join "\n"
 
         FetchingRows table ->
             String.concat
