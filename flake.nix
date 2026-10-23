@@ -9,10 +9,10 @@
       pkgs = import nixpkgs { inherit system; };
       sky = pkgs.stdenv.mkDerivation rec {
         name = "sky";
-        version = "0.27.9";
+        version = "0.27.12";
         src = builtins.fetchurl {
           url = "https://github.com/anzellai/sky/releases/download/v${version}/sky-linux-x64.tar.gz";
-          sha256 = "sha256:0dyqqqaj1cs55p6k74pra9if7ria432z56w37784iha6c4ilns2j";
+          sha256 = "sha256:0d8bj863nh7n9fhsb1xrs32y90fwdr2mb5757f05x4rjn18nfk9w";
         };
 
         phases = [ "installPhase" ];
