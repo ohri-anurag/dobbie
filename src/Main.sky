@@ -1,5 +1,6 @@
 module Main exposing (main)
 
+import GridZipper as GZ
 import ListZipper as LZ
 import NEList as NEList
 import Sky.Core.Error exposing (Error)
@@ -26,7 +27,7 @@ type Msg
     | NoSchemas
     | Tables (NEList String)
     | NoTables String
-    | Rows (List String) (NEList (List String))
+    | Rows (NEList String) (NEList (NEList String))
     | NoRows Table
     | KeyPress KeyEvent
     | CriticalError String
@@ -51,7 +52,7 @@ type Mode
     | NoTablesMode String
     | FetchingRows Table
     | NoRowsMode Table
-    | RowsMode (List String) (NEList (List String))
+    | RowsMode (NEList String) (NEList (NEList String)) (GZ.GridZipper String)
     | Select Selector
 
 type alias Model =
@@ -137,7 +138,9 @@ update msg model =
             ( { model | mode = NoRowsMode table }, Cmd.none )
 
         Rows headers rows ->
-            ( { model | mode = RowsMode headers rows }, Cmd.none )
+            ( { model | mode = GZ.fromGrid rows |> RowsMode headers rows }
+            , Cmd.none
+            )
 
         CriticalError err ->
             ( model, Cmd.none )
@@ -167,6 +170,13 @@ update msg model =
                             , Cmd.none
                             )
 
+                        RowsMode headers rows gz ->
+                            ( { model
+                                  | mode = GZ.up gz |> RowsMode headers rows
+                              }
+                            , Cmd.none
+                            )
+
                         _ ->
                             ( model, Cmd.none )
 
@@ -189,6 +199,39 @@ update msg model =
                                               Select <| SelectTable schema list
                                                   <| LZ.forward lz
                                       }
+                            , Cmd.none
+                            )
+
+                        RowsMode headers rows gz ->
+                            ( { model
+                                  | mode = GZ.down gz |> RowsMode headers rows
+                              }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                ( "left", _ ) ->
+                    case model.mode of
+
+                        RowsMode headers rows gz ->
+                            ( { model
+                                  | mode = GZ.left gz |> RowsMode headers rows
+                              }
+                            , Cmd.none
+                            )
+
+                        _ ->
+                            ( model, Cmd.none )
+
+                ( "right", _ ) ->
+                    case model.mode of
+
+                        RowsMode headers rows gz ->
+                            ( { model
+                                  | mode = GZ.right gz |> RowsMode headers rows
+                              }
                             , Cmd.none
                             )
 
@@ -255,8 +298,9 @@ update msg model =
 
                                                 Ok rows ->
                                                     case NEList.fromList
-                                                             (List.map
-                                                                 Dict.toList
+                                                             (List.filterMap
+                                                                 (Dict.toList
+                                                                     >> NEList.fromList)
                                                                  rows) of
 
                                                         Nothing ->
@@ -271,10 +315,10 @@ update msg model =
                                                             Rows
                                                                 (NEList.head
                                                                     neRows
-                                                                    |> List.map
+                                                                    |> NEList.map
                                                                            Tuple.first)
                                                                 (NEList.map
-                                                                    (List.map
+                                                                    (NEList.map
                                                                         Tuple.second)
                                                                     neRows)
                                     in
@@ -325,10 +369,10 @@ view model =
             String.concat
                 [ "No rows found for ", table.schema, ".", table.name ]
 
-        RowsMode headers (NEList x xs) ->
+        RowsMode headers (NEList x xs) gz ->
             let
                 width = 20
-                headerLen = List.length headers
+                headerLen = NEList.length headers
                 topHeaderSeparators =
                     String.repeat (width + 2) "─"
                         |> (\str ->
@@ -341,25 +385,36 @@ view model =
                                List.range 1 headerLen |> List.map (always str))
                         |> String.join "┼"
                         |> \str -> String.concat [ "├", str, "┤" ]
-                equalise str =
+                equalise i j str =
                     let
-                        len = String.length str
+                        ( r, c ) = GZ.coords gz
+                        s =
+                            if ( i, j ) == ( r, c ) then
+                                String.append "> " str
+
+                            else
+                                str
+                        len = String.length s
                     in
                         if len < width then
-                            String.repeat (width - len) " " |> String.append str
+                            String.repeat (width - len) " " |> String.append s
 
                         else if len > (width - 1) then
-                            String.ellipsize (width - 1) str
+                            String.ellipsize (width - 1) s
 
                         else
-                            str
-                display row =
-                    List.map equalise row |> String.join " │ "
+                            s
+                display i (NEList r rs) =
+                    r :: rs |> List.indexedMap (equalise i) |> String.join " │ "
+                        |> \s -> String.concat [ "│ ", s, " │" ]
+                displayHeaders (NEList r rs) =
+                    r :: rs |> List.map (equalise (-1) (-1))
+                        |> String.join " │ "
                         |> \s -> String.concat [ "│ ", s, " │" ]
             in
-                x :: xs |> List.map display
+                x :: xs |> List.indexedMap display
                     |> (\rows ->
-                           topHeaderSeparators :: display headers
+                           topHeaderSeparators :: displayHeaders headers
                                :: bottomHeaderSeparators
                                :: rows)
                     |> String.join "\n"

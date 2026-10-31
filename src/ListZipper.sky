@@ -15,6 +15,15 @@ fromList (NEList x rest) =
     { before = [], current = x, index = 0, after = rest }
 
 
+map : (a -> b) -> ListZipper a -> ListZipper b
+map f lz =
+    { lz
+        | before = List.map f lz.before
+        , current = f lz.current
+        , after = List.map f lz.after
+    }
+
+
 forward : ListZipper a -> ListZipper a
 forward lz =
     case lz.after of

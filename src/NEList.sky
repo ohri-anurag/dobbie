@@ -23,3 +23,8 @@ map f (NEList x xs) =
 head : NEList a -> a
 head (NEList x _) =
     x
+
+
+length : NEList a -> Int
+length (NEList _ xs) =
+    List.length xs + 1

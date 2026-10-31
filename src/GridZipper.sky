@@ -1,0 +1,42 @@
+module GridZipper exposing (..)
+
+import ListZipper as LZ
+import NEList
+
+type GridZipper a
+    = GridZipper (LZ.ListZipper (LZ.ListZipper a))
+
+
+fromGrid : NEList (NEList a) -> GridZipper a
+fromGrid listOfLists =
+    NEList.map LZ.fromList listOfLists |> LZ.fromList |> GridZipper
+
+
+up : GridZipper a -> GridZipper a
+up (GridZipper lz) =
+    LZ.backward lz |> GridZipper
+
+
+down : GridZipper a -> GridZipper a
+down (GridZipper lz) =
+    LZ.forward lz |> GridZipper
+
+
+left : GridZipper a -> GridZipper a
+left (GridZipper lz) =
+    LZ.map LZ.backward lz |> GridZipper
+
+
+right : GridZipper a -> GridZipper a
+right (GridZipper lz) =
+    LZ.map LZ.forward lz |> GridZipper
+
+
+coords : GridZipper a -> ( Int, Int )
+coords (GridZipper lz) =
+    ( lz.index, lz.current.index )
+
+
+current : GridZipper a -> a
+current (GridZipper lz) =
+    lz.current.current
